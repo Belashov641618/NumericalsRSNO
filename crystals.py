@@ -4,13 +4,14 @@ from torch import Tensor
 
 def material_transition(n0: Tensor, n1: Tensor):
     M = n0 / n1
-    mask = (2 * torch.eye(2, device=n0.device) - 1).view(*[1] * len(M.shape), 2, 2)
-    return 0.5 * (1.0 + M.view(*M.shape, 1, 1) * mask)
+    mask = (2 * torch.eye(2, device=n0.device) - 1).view(*[1]*len(M.shape), 2, 2)
+    transition = 0.5*(1.0 + M.view(*M.shape,1,1)*mask)
+    return transition.to(torch.complex128)
 
 def material_propagation(wavelength:Tensor, n:Tensor, d:Tensor):
     device = wavelength.device
     k = 2*torch.pi*n/wavelength
-    arg = 1j*k*d
+    arg = (1j*k*d).to(torch.complex128)
     mask = (torch.eye(2,device=device)*(-torch.arange(-1,2,2,device=device)).view(-1,1)).view(*[1]*len(arg.shape),2,2)
     propagation = torch.exp(arg.view(*arg.shape,1,1)*mask)
     return torch.where(mask==0,0,propagation)
@@ -31,21 +32,21 @@ def matrix_power(matrix:Tensor, powers:Tensor):
 class BasicElement(torch.nn.Module):
     _conversation:torch.Tensor
     def _register_conversation(self, matrix:Tensor):
-        self.register_buffer("_transverse", matrix)
+        self.register_buffer("_conversation", matrix.to(torch.complex128))
     @property
     def conversation(self):
         return self._conversation
 
     _first_n:Tensor
     def _register_first_n(self, tensor:Tensor):
-        self.register_buffer("_n0", tensor)
+        self.register_buffer("_first_n", tensor)
     @property
     def first_n(self):
         return self._first_n
 
     _last_n:Tensor
     def _register_last_n(self, tensor:Tensor):
-        self.register_buffer("_n1", tensor)
+        self.register_buffer("_last_n", tensor)
     @property
     def last_n(self):
         return self._last_n
@@ -64,7 +65,7 @@ class BasicElement(torch.nn.Module):
         return self._conversation.device
 
     def __init__(self):
-        super().__init__(self)
+        super().__init__()
 
 class Crystal(BasicElement):
     def __init__(self, *elements:BasicElement):
@@ -88,8 +89,8 @@ class DoubleLayerMassive(BasicElement):
         super().__init__()
         propagation1 = material_propagation(wavelength, n1, d1)
         propagation2 = material_propagation(wavelength, n2, d2)
-        transition12 = material_transition(n1,n2).to(torch.complex64)
-        transition21 = material_transition(n2,n1).to(torch.complex64)
+        transition12 = material_transition(n1,n2)
+        transition21 = material_transition(n2,n1)
         self._register_first_n(n1)
         self._register_last_n(n2)
         self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
