@@ -1,6 +1,7 @@
 import torch
-
 from torch import Tensor
+
+
 
 def material_transition(n0: Tensor, n1: Tensor):
     M = n0 / n1
@@ -27,6 +28,7 @@ def matrix_power(matrix:Tensor, powers:Tensor):
         temp = torch.linalg.matrix_power(matrix[indices].view(-1, 2, 2), power.item())
         n_power_matrix[indices] = temp.view(-1)
     return n_power_matrix
+
 
 
 class BasicElement(torch.nn.Module):
