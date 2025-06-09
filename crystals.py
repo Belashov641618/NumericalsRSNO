@@ -10,13 +10,19 @@ def material_transition(n0: Tensor, n1: Tensor):
     transition = 0.5*(1.0 + M.view(*M.shape,1,1)*mask)
     return transition.to(torch.complex128)
 
-def material_propagation(wavelength:Tensor, n:Tensor, d:Tensor):
+def material_propagation(wavelength:Tensor, n:Tensor, d:Tensor, theta:Tensor=None):
     device = wavelength.device
-    k = 2*torch.pi*n/wavelength
+    if theta is None:
+        k = 2 * torch.pi*n/wavelength
+    else:
+        k0 = 2*torch.pi/wavelength
+        kz = k0*torch.sqrt(n**2-torch.sin(theta)**2)
+        k = kz
     arg = (1j*k*d).to(torch.complex128)
     mask = (torch.eye(2,device=device)*(-torch.arange(-1,2,2,device=device)).view(-1,1)).view(*[1]*len(arg.shape),2,2)
     propagation = torch.exp(arg.view(*arg.shape,1,1)*mask)
     return torch.where(mask==0,0,propagation)
+
 
 def matrix_power(matrix:Tensor, powers:Tensor):
     expanding = [max(dim0, dim1) for dim0, dim1 in zip(matrix.shape, powers.shape)]
@@ -98,22 +104,42 @@ class DoubleLayerMassive(BasicElement):
         self._register_last_n(n2)
         self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
 
-class DoubleLayerMassiveNonOrthogonal(BasicElement):
-    def __init__(self, wavelength:Tensor, n1:Tensor, d1:Tensor, n2:Tensor, d2:Tensor, pairs:Tensor, polarization:Literal["S","P"], theta:Tensor):
-        super().__init__()
-        alpha1 = -n1*torch.cos(theta) if polarization == "S" else +n1/torch.cos(theta)
-        alpha2 = -n2*torch.cos(theta) if polarization == "S" else +n2/torch.cos(theta)
-        propagation1 = material_propagation(wavelength, n1, d1)
-        propagation2 = material_propagation(wavelength, n2, d2)
-        transition12 = material_transition(alpha1,alpha2)
-        transition21 = material_transition(alpha2,alpha1)
-        self._register_first_n(n1)
-        self._register_last_n(n2)
-        self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
-
 class Air(BasicElement):
     def __init__(self, n0:Tensor):
         super().__init__()
         self._register_first_n(n0)
         self._register_last_n(n0)
         self._register_conversation(torch.eye(2,device=n0.device).view(*[1]*len(n0.shape),2,2))
+
+
+
+class LayerNonOrthogonal(BasicElement):
+    def __init__(self, wavelength:Tensor, n:Tensor, d:Tensor, theta:Tensor):
+        super().__init__()
+        self._register_conversation(material_propagation(wavelength, n, d, theta=theta))
+        self._register_first_n(n)
+        self._register_last_n(n)
+
+class DoubleLayerMassiveNonOrthogonal(BasicElement):
+    def __init__(self, wavelength:Tensor, n1:Tensor, d1:Tensor, n2:Tensor, d2:Tensor, pairs:Tensor, polarization:Literal["S","P"], theta:Tensor):
+        super().__init__()
+        alpha1 = -torch.sqrt(n1**2-torch.sin(theta)**2) if polarization == "S" else +n1**2/torch.sqrt(n1**2-torch.sin(theta)**2)
+        alpha2 = -torch.sqrt(n2**2-torch.sin(theta)**2) if polarization == "S" else +n2**2/torch.sqrt(n2**2-torch.sin(theta)**2)
+        propagation1 = material_propagation(wavelength, n1, d1, theta=theta)
+        propagation2 = material_propagation(wavelength, n2, d2, theta=theta)
+        transition12 = material_transition(alpha1,alpha2)
+        transition21 = material_transition(alpha2,alpha1)
+        self._register_first_n(n1)
+        self._register_last_n(n2)
+        self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
+
+class CrystalNonOrthogonal(BasicElement):
+    def __init__(self, *elements:BasicElement, polarization:Literal["S","P"], theta:Tensor):
+        super().__init__()
+        conversation = elements[0].conversation
+        for element1, element0 in zip(elements[1:], elements[:-1]):
+            conversation = conversation @ material_transition(
+                -torch.sqrt(element0.first_n**2-torch.sin(theta)**2) if polarization == "S" else +element0.first_n**2/torch.sqrt(element0.first_n**2-torch.sin(theta)**2),
+                -torch.sqrt(element1.last_n**2-torch.sin(theta)**2) if polarization == "S" else +element1.last_n**2/torch.sqrt(element1.last_n**2-torch.sin(theta)**2)
+            ) @ element1.conversation
+        self._register_conversation(conversation)
