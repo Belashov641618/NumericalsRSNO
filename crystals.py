@@ -1,5 +1,6 @@
 import torch
 from torch import Tensor
+from typing import Literal
 
 
 
@@ -93,6 +94,19 @@ class DoubleLayerMassive(BasicElement):
         propagation2 = material_propagation(wavelength, n2, d2)
         transition12 = material_transition(n1,n2)
         transition21 = material_transition(n2,n1)
+        self._register_first_n(n1)
+        self._register_last_n(n2)
+        self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
+
+class DoubleLayerMassiveNonOrthogonal(BasicElement):
+    def __init__(self, wavelength:Tensor, n1:Tensor, d1:Tensor, n2:Tensor, d2:Tensor, pairs:Tensor, polarization:Literal["S","P"], theta:Tensor):
+        super().__init__()
+        alpha1 = -n1*torch.cos(theta) if polarization == "S" else +n1/torch.cos(theta)
+        alpha2 = -n2*torch.cos(theta) if polarization == "S" else +n2/torch.cos(theta)
+        propagation1 = material_propagation(wavelength, n1, d1)
+        propagation2 = material_propagation(wavelength, n2, d2)
+        transition12 = material_transition(alpha1,alpha2)
+        transition21 = material_transition(alpha2,alpha1)
         self._register_first_n(n1)
         self._register_last_n(n2)
         self._register_conversation(propagation1 @ transition12 @ matrix_power(propagation2@transition21@propagation1@transition12, pairs) @ propagation2)
